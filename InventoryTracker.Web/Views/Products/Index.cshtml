@@ -1,9 +1,11 @@
-﻿@model List<InventoryTracker.Web.Services.ProductSummaryDto>
+﻿@model InventoryTracker.Web.Services.PagedResult<InventoryTracker.Web.Services.ProductSummaryDto>
 @{
     ViewData["Title"] = "Inventory Products";
-    var totalProducts = Model.Count;
-    var lowStockCount = Model.Count(p => p.IsActive && p.IsLowStock);
-    var totalUnits = Model.Where(p => p.IsActive).Sum(p => p.CurrentStock);
+    var pageProducts = Model.Items;
+    var stats = ViewBag.Stats as InventoryTracker.Web.Services.DashboardStatsDto;
+    var totalActiveSkus = stats?.TotalActiveSkus ?? 0;
+    var totalUnits = stats?.TotalUnitsOnHand ?? 0;
+    var belowReorderCount = stats?.BelowReorderCount ?? 0;
 }
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -13,7 +15,6 @@
     </div>
     <a asp-action="Create" class="btn btn-primary">+ Add New Product</a>
 </div>
-
 
 @if (TempData["SuccessMessage"] != null)
 {
@@ -30,14 +31,13 @@
     </div>
 }
 
-
-<!-- Summary Cards -->
+<!-- Summary Cards (Global Inventory Totals) -->
 <div class="row g-3 mb-4">
     <div class="col-md-4">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
-                <div class="text-muted small">Total Products</div>
-                <div class="fs-4 fw-bold">@totalProducts</div>
+                <div class="text-muted small">Total Active SKUs</div>
+                <div class="fs-4 fw-bold">@totalActiveSkus</div>
             </div>
         </div>
     </div>
@@ -52,34 +52,39 @@
     <div class="col-md-4">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
-                <div class="text-muted small">Low Stock Alerts</div>
-                <div class="fs-4 fw-bold @(lowStockCount > 0 ? "text-danger" : "text-success")">@lowStockCount</div>
+                <div class="text-muted small">Below Reorder Level</div>
+                <div class="fs-4 fw-bold @(belowReorderCount > 0 ? "text-danger" : "text-success")">@belowReorderCount</div>
             </div>
         </div>
     </div>
 </div>
 
-
 <!-- Search & Filter Bar -->
 <form method="get" asp-action="Index" class="card card-body border-0 shadow-sm mb-3">
     <div class="row g-2 align-items-center">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <input type="text" name="search" value="@ViewBag.Search" class="form-control" placeholder="Search by SKU or Product Name..." />
         </div>
         <div class="col-md-3">
             <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="showInactive" value="true" id="showInactiveCheck" @(ViewBag.ShowInactive == true ? "checked" : "") />
                 <input type="hidden" name="showInactive" value="false" />
-                <label class="form-check-label" for="showInactiveCheck">Include inactive products</label>
+                <label class="form-check-label" for="showInactiveCheck">Include inactive</label>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="lowStockOnly" value="true" id="lowStockCheck" @(ViewBag.LowStockOnly == true ? "checked" : "") />
+                <input type="hidden" name="lowStockOnly" value="false" />
+                <label class="form-check-label text-danger fw-semibold" for="lowStockCheck">Low stock only</label>
             </div>
         </div>
         <div class="col-md-3 text-md-end">
-            <button type="submit" class="btn btn-outline-primary me-1">Search</button>
+            <button type="submit" class="btn btn-outline-primary me-1">Apply</button>
             <a asp-action="Index" class="btn btn-outline-secondary">Reset</a>
         </div>
     </div>
 </form>
-
 
 <!-- Products Table -->
 <div class="card border-0 shadow-sm">
@@ -96,17 +101,17 @@
                 </tr>
             </thead>
             <tbody>
-                @if (!Model.Any())
+                @if (!pageProducts.Any())
                 {
                     <tr>
                         <td colspan="6" class="text-center py-4 text-muted">
-                            No products found. Click <strong>+ Add New Product</strong> to get started.
+                            No products found matching your criteria.
                         </td>
                     </tr>
                 }
                 else
                 {
-                    foreach (var item in Model)
+                    foreach (var item in pageProducts)
                     {
                         <tr class="@(!item.IsActive ? "table-secondary text-muted" : "")">
                             <td class="fw-semibold"><code>@item.Sku</code></td>
@@ -147,6 +152,39 @@
             </tbody>
         </table>
     </div>
+
+    @if (Model.TotalPages > 1)
+    {
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+            <small class="text-muted">Page @Model.Page of @Model.TotalPages (@Model.TotalCount total)</small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item @(!Model.HasPreviousPage ? "disabled" : "")">
+                        <a class="page-link" asp-action="Index"
+                           asp-route-search="@ViewBag.Search"
+                           asp-route-showInactive="@ViewBag.ShowInactive"
+                           asp-route-lowStockOnly="@ViewBag.LowStockOnly"
+                           asp-route-page="@(Model.Page - 1)">Previous</a>
+                    </li>
+                    @for (int p = 1; p <= Model.TotalPages; p++)
+                    {
+                        <li class="page-item @(p == Model.Page ? "active" : "")">
+                            <a class="page-link" asp-action="Index"
+                               asp-route-search="@ViewBag.Search"
+                               asp-route-showInactive="@ViewBag.ShowInactive"
+                               asp-route-lowStockOnly="@ViewBag.LowStockOnly"
+                               asp-route-page="@p">@p</a>
+                        </li>
+                    }
+                    <li class="page-item @(!Model.HasNextPage ? "disabled" : "")">
+                        <a class="page-link" asp-action="Index"
+                           asp-route-search="@ViewBag.Search"
+                           asp-route-showInactive="@ViewBag.ShowInactive"
+                           asp-route-lowStockOnly="@ViewBag.LowStockOnly"
+                           asp-route-page="@(Model.Page + 1)">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    }
 </div>
-
-

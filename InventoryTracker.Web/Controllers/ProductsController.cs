@@ -16,22 +16,25 @@ public class ProductsController : Controller
 
     // Screen 1: Product List + Search + Filter
     [HttpGet]
-    public async Task<IActionResult> Index(string? search, bool showInactive = true)
+    public async Task<IActionResult> Index(string? search, bool showInactive = true, bool lowStockOnly = false, int page = 1)
     {
-        var products = await _inventoryService.GetProductsAsync(search, showInactive);
+        var pagedProducts = await _inventoryService.GetProductsAsync(search, showInactive, lowStockOnly, page, pageSize: 5);
         ViewBag.Search = search;
         ViewBag.ShowInactive = showInactive;
-        return View(products);
+        ViewBag.LowStockOnly = lowStockOnly;
+        ViewBag.Stats = await _inventoryService.GetDashboardStatsAsync();
+        return View(pagedProducts);
     }
 
     // Screen 2: Product Detail + Stock Movements History
     [HttpGet]
-    public async Task<IActionResult> Details(int id)
+    public async Task<IActionResult> Details(int id, int page = 1)
     {
-        var detail = await _inventoryService.GetProductDetailAsync(id);
+        var detail = await _inventoryService.GetProductDetailAsync(id, movementPage: page, movementPageSize: 10);
         if (detail == null) return NotFound();
         return View(detail);
     }
+
 
     // Record Stock Movement (In / Out)
     [HttpPost]
@@ -48,6 +51,7 @@ public class ProductsController : Controller
         return RedirectToAction(nameof(Details), new { id = productId });
     }
 
+
     // Stretch Goal: Export Movement History as CSV
     [HttpGet]
     public async Task<IActionResult> ExportMovementsCsv(int id)
@@ -55,10 +59,12 @@ public class ProductsController : Controller
         var detail = await _inventoryService.GetProductDetailAsync(id);
         if (detail == null) return NotFound();
 
+        var allMovements = await _inventoryService.GetAllMovementsForExportAsync(id);
+
         var sb = new StringBuilder();
         sb.AppendLine("MovementId,SKU,ProductName,Type,Quantity,Note,TimestampUtc");
 
-        foreach (var m in detail.Movements)
+        foreach (var m in allMovements)
         {
             var safeName = detail.Name.Replace("\"", "\"\"");
             var safeNote = (m.Note ?? string.Empty).Replace("\"", "\"\"");
@@ -68,6 +74,8 @@ public class ProductsController : Controller
         var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         return File(bytes, "text/csv", $"{detail.Sku}_stock_movements.csv");
     }
+
+
 
     // Screen 3a: Create Product (Pre-filled Auto-SKU, editable for duplicate SKU validation)
     [HttpGet]
@@ -147,6 +155,29 @@ public class ProductsController : Controller
 
         return RedirectToAction(nameof(Index));
     }
+
+
+    [HttpGet("/api/products/{id:int}/stock")]
+    public async Task<IActionResult> GetStockJson(int id)
+    
+    {
+        var detail = await _inventoryService.GetProductDetailAsync(id, movementPage: 1, movementPageSize: 1);
+        if (detail == null)
+            return NotFound(new { error = $"Product with ID {id} not found." });
+
+        return Ok(new
+        {
+            productId = detail.Id,
+            sku = detail.Sku,
+            name = detail.Name,
+            currentStock = detail.CurrentStock,
+            reorderLevel = detail.ReorderLevel,
+            isLowStock = detail.IsLowStock,
+            isActive = detail.IsActive,
+            asOfUtc = DateTime.UtcNow
+        });
+    }
+
 
 
 }

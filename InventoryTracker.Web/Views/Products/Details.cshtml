@@ -2,6 +2,7 @@
 @model InventoryTracker.Web.Services.ProductDetailDto
 @{
     ViewData["Title"] = $"{Model.Sku} - {Model.Name}";
+    var ledger = Model.PagedMovements;
 }
 
 <div class="mb-3">
@@ -24,7 +25,6 @@
 }
 
 <div class="row g-4">
-    <!-- Left Column: Product Info + Record Movement -->
     <div class="col-lg-5">
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-body">
@@ -61,7 +61,6 @@
             </div>
         </div>
 
-        <!-- Record Movement Form -->
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white fw-bold">Record Stock Movement</div>
             <div class="card-body">
@@ -102,12 +101,11 @@
         </div>
     </div>
 
-    <!-- Right Column: Chronological Ledger -->
     <div class="col-lg-7">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span class="fw-bold">Stock Movement Ledger (@Model.Movements.Count)</span>
-                @if (Model.Movements.Any())
+                <span class="fw-bold">Stock Movement Ledger (@ledger.TotalCount)</span>
+                @if (ledger.TotalCount > 0)
                 {
                     <a asp-action="ExportMovementsCsv" asp-route-id="@Model.Id" class="btn btn-sm btn-outline-success">
                         Export CSV
@@ -125,7 +123,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @if (!Model.Movements.Any())
+                        @if (!ledger.Items.Any())
                         {
                             <tr>
                                 <td colspan="4" class="text-center py-4 text-muted">
@@ -135,7 +133,7 @@
                         }
                         else
                         {
-                            foreach (var m in Model.Movements)
+                            foreach (var m in ledger.Items)
                             {
                                 <tr>
                                     <td class="small text-muted">@m.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
@@ -157,8 +155,30 @@
                     </tbody>
                 </table>
             </div>
+
+            @if (ledger.TotalPages > 1)
+            {
+                <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Page @ledger.Page of @ledger.TotalPages</small>
+                    <nav>
+                        <ul class="pagination pagination-sm mb-0">
+                            <li class="page-item @(!ledger.HasPreviousPage ? "disabled" : "")">
+                                <a class="page-link" asp-action="Details" asp-route-id="@Model.Id" asp-route-page="@(ledger.Page - 1)">Previous</a>
+                            </li>
+                            @for (int p = 1; p <= ledger.TotalPages; p++)
+                            {
+                                <li class="page-item @(p == ledger.Page ? "active" : "")">
+                                    <a class="page-link" asp-action="Details" asp-route-id="@Model.Id" asp-route-page="@p">@p</a>
+                                </li>
+                            }
+                            <li class="page-item @(!ledger.HasNextPage ? "disabled" : "")">
+                                <a class="page-link" asp-action="Details" asp-route-id="@Model.Id" asp-route-page="@(ledger.Page + 1)">Next</a>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            }
         </div>
     </div>
 </div>
-
 

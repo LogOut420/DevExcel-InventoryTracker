@@ -7,14 +7,45 @@ namespace InventoryTracker.Web.Services;
 public class InventoryService : IInventoryService
 {
     private readonly AppDbContext _db;
+    private readonly ILogger<InventoryService> _logger;
 
     public InventoryService(AppDbContext db)
     {
         _db = db;
     }
 
-    public async Task<List<ProductSummaryDto>> GetProductsAsync(string? searchTerm, bool includeInactive = true)
+    public InventoryService(AppDbContext db, ILogger<InventoryService> logger)
     {
+        _db = db;
+        _logger = logger;
+    }
+
+    public async Task<DashboardStatsDto> GetDashboardStatsAsync()
+    {
+        var activeProducts = await _db.Products
+            .AsNoTracking()
+            .Where(p => p.IsActive)
+            .Select(p => new
+            {
+                p.ReorderLevel,
+                Stock = p.Movements.Sum(m => m.Type == MovementType.In ? m.Quantity : -m.Quantity)
+            })
+            .ToListAsync();
+
+        return new DashboardStatsDto(
+            TotalActiveSkus: activeProducts.Count,
+            BelowReorderCount: activeProducts.Count(p => p.Stock <= p.ReorderLevel),
+            TotalUnitsOnHand: activeProducts.Sum(p => p.Stock)
+        );
+    }
+
+
+    public async Task<PagedResult<ProductSummaryDto>> GetProductsAsync(
+        string? searchTerm, bool includeInactive = true, bool lowStockOnly = false, int page = 1, int pageSize = 10)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
         var query = _db.Products.AsNoTracking().AsQueryable();
 
         if (!includeInactive)
@@ -26,36 +57,62 @@ public class InventoryService : IInventoryService
             query = query.Where(p => p.Sku.Contains(term) || p.Name.Contains(term));
         }
 
-        return await query
+        var projected = query.Select(p => new ProductSummaryDto
+        {
+            Id = p.Id,
+            Sku = p.Sku,
+            Name = p.Name,
+            ReorderLevel = p.ReorderLevel,
+            IsActive = p.IsActive,
+            CurrentStock = p.Movements.Sum(m => m.Type == MovementType.In ? m.Quantity : -m.Quantity)
+        });
+
+        if (lowStockOnly)
+            projected = projected.Where(p => p.IsActive && p.CurrentStock <= p.ReorderLevel);
+
+        var totalCount = await projected.CountAsync();
+        var items = await projected
             .OrderBy(p => p.Sku)
-            .Select(p => new ProductSummaryDto
-            {
-                Id = p.Id,
-                Sku = p.Sku,
-                Name = p.Name,
-                ReorderLevel = p.ReorderLevel,
-                IsActive = p.IsActive,
-                CurrentStock = p.Movements.Sum(m => m.Type == MovementType.In ? m.Quantity : -m.Quantity)
-            })
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync();
+
+        return new PagedResult<ProductSummaryDto>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = totalCount
+        };
     }
 
 
-    public async Task<ProductDetailDto?> GetProductDetailAsync(int id)
+    public async Task<ProductDetailDto?> GetProductDetailAsync(int id, int movementPage = 1, int movementPageSize = 10)
     {
+        movementPage = Math.Max(1, movementPage);
+        movementPageSize = Math.Clamp(movementPageSize, 1, 100);
+
         var product = await _db.Products
             .AsNoTracking()
-            .Include(p => p.Movements)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         if (product == null) return null;
 
-        var movements = product.Movements
+        var currentStock = await _db.StockMovements
+            .Where(m => m.ProductId == id)
+            .SumAsync(m => m.Type == MovementType.In ? m.Quantity : -m.Quantity);
+
+        var movementsQuery = _db.StockMovements
+            .AsNoTracking()
+            .Where(m => m.ProductId == id);
+
+        var totalMovements = await movementsQuery.CountAsync();
+        var pagedItems = await movementsQuery
             .OrderByDescending(m => m.CreatedAt)
             .ThenByDescending(m => m.Id)
-            .ToList();
-
-        var currentStock = movements.Sum(m => m.Type == MovementType.In ? m.Quantity : -m.Quantity);
+            .Skip((movementPage - 1) * movementPageSize)
+            .Take(movementPageSize)
+            .ToListAsync();
 
         return new ProductDetailDto
         {
@@ -67,10 +124,25 @@ public class InventoryService : IInventoryService
             IsActive = product.IsActive,
             CreatedAt = product.CreatedAt,
             CurrentStock = currentStock,
-            Movements = movements
+            PagedMovements = new PagedResult<StockMovement>
+            {
+                Items = pagedItems,
+                Page = movementPage,
+                PageSize = movementPageSize,
+                TotalCount = totalMovements
+            }
         };
     }
 
+    public async Task<List<StockMovement>> GetAllMovementsForExportAsync(int productId)
+    {
+        return await _db.StockMovements
+            .AsNoTracking()
+            .Where(m => m.ProductId == productId)
+            .OrderByDescending(m => m.CreatedAt)
+            .ThenByDescending(m => m.Id)
+            .ToListAsync();
+    }
 
     public async Task<string> GenerateNextSkuAsync()
     {
@@ -126,6 +198,7 @@ public class InventoryService : IInventoryService
         product.Name = dto.Name.Trim();
         product.Description = dto.Description?.Trim();
         product.ReorderLevel = dto.ReorderLevel;
+        product.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
         return new ServiceResult(true);
@@ -139,9 +212,12 @@ public class InventoryService : IInventoryService
             return new ServiceResult(false, "Product not found.");
 
         product.IsActive = !product.IsActive;
+        product.UpdatedAt = DateTime.UtcNow;
+
         await _db.SaveChangesAsync();
         return new ServiceResult(true);
     }
+
 
 
     public async Task<ServiceResult> RecordMovementAsync(int productId, MovementType type, int quantity, string? note)
@@ -180,12 +256,13 @@ public class InventoryService : IInventoryService
             };
 
             _db.StockMovements.Add(movement);
-
-            // Product.RowVersion so concurrent requests detect conflicts
             _db.Entry(product).State = EntityState.Modified;
 
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
+
+            _logger.LogInformation("Stock movement recorded: ProductId={ProductId}, SKU={Sku}, Type={Type}, Qty={Quantity}",
+    product.Id, product.Sku, type, quantity);
 
             return new ServiceResult(true);
         }
