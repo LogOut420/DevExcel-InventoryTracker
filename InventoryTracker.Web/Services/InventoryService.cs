@@ -270,7 +270,7 @@ public class InventoryService : IInventoryService
         {
             await transaction.RollbackAsync();
             return new ServiceResult(false,
-                "Stock was modified by another concurrent request. Please review the updated stock level and try again.");
+                "Stock was modified by another request. Please review the updated stock level and try again.");
         }
     }
 
