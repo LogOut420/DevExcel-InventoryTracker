@@ -1,32 +1,28 @@
-﻿# Inventory Tracker (.NET 10 MVC)
+﻿# AI Collaboration Notes
 
-A lightweight, production-structured Inventory Tracker built with **ASP.NET Core 10 (MVC)**, **Entity Framework Core**, **SQL Server**, **Bootstrap 5**, and **xUnit**.
 
-## Core Architecture & Design Decisions
+## Tools Used
+- **Gemini (LLM)** for architecture review, best practices, and performance techniques.
 
-- **Immutable Movement Ledger (`Derived Stock`)**: `Product` does not store a mutable `Quantity` column. Current stock is always derived strictly as `SUM(In) - SUM(Out)` from `StockMovements`, ensuring full auditability and eliminating stock drift.
-- **Negative Stock & Race Condition Protection**:
-  - `InventoryService.RecordMovementAsync` runs inside an explicit database transaction (`BeginTransactionAsync`), validates `quantity <= currentStock` before persisting any `Out` movement, and marks the parent `Product` entity as modified so SQL Server advances its `[Timestamp] RowVersion` concurrency token.
-  - Overlapping concurrent requests catch `DbUpdateConcurrencyException`, roll back cleanly, and display a conflict warning to the user.
-- **Auto-Generated SKUs with Uniqueness Enforcement**: Suggests the next sequential SKU (`PRD-1001`, `PRD-1002`, ...) on product creation while enforcing case-insensitive uniqueness both in service logic and via a SQL Server `UNIQUE` index.
 
-## Stretch Goals Implemented
+## How AI Was Used
+- **Scaffolding & UI Layout:** Initial ASP.NET Core 10 MVC boilerplate, EF Core `AppDbContext` fluent configurations, aur clean Bootstrap 
+- Razor views (`Index`, `Details`, `Create/Edit`) ko tezi se structure karne ke liye.
+- **LINQ & SQL Projection:** `SUM(In) - SUM(Out)` ke liye single-query `.Select()` projections likhne ke liye.
+- **Test Setup:** Isolated SQLite In-Memory xUnit fixtures setup karne ke liye jo derived stock calculation aur non-negative stock rule ko verify karte hain.
 
-1. **Server-Side Pagination**: 5-item pagination on the Product List and 10-item pagination on the Stock Movement Ledger.
-2. **CSV Movement Export**: One-click export (`GET /Products/ExportMovementsCsv/{id}`) of a product's complete chronological movement ledger.
-3. **Global Inventory Dashboard**: Summary cards showing Total Active SKUs, Active Units on Hand, and Count Below Reorder Level across the entire catalog.
-4. **Optimistic Concurrency (`RowVersion`)**: Database-level concurrency control with clean conflict feedback.
-5. **Audit Fields & Structured Logging**: `CreatedAt` and `UpdatedAt` UTC timestamps alongside `ILogger` structured telemetry.
-6. **JSON Stock API Endpoint**: `GET /api/products/{id}/stock` returning live derived stock and reorder status as JSON.
 
-## How to Run Locally
+## Examples Where AI Got It Wrong & How I Caught/Fixed Them
 
-### Prerequisites
-- .NET 10 SDK
-- SQL Server (LocalDB or SQL Server Express/Developer)
+### 1. Dashboard Summary Cards Calculated Only From the Current Page
+- **What AI Got Wrong:** Jab server-side pagination (5 items per page) ke saath top summary cards (`Total Active SKUs`, `Active Units on Hand`, `Below Reorder Level`) implement 
+kiye gaye, toh initial AI-generated code mein ye counts poori database ki bajaye sirf current page ke `Model.Items` se calculate ho rahe thay.
+- **How I Caught & Fixed It:** Jab maine Page 2 par low-stock items test kiye toh top dashboard cards ke numbers active page ke mutabiq change hone lage aur ghalat count dikhane lage. 
+Maine summary metrics ko aik alag `GetDashboardStatsAsync()` query mein shift kiya taake cards hamesha poori database ka accurate global count dikhayein.
 
-### Setup Steps
-1. Update the `DefaultConnection` string in `InventoryTracker.Web/appsettings.json` to match your SQL Server instance.
-2. Run the web application (database and EF Core migrations apply automatically on startup via `DbInitializer.InitializeAsync`):
-   ```bash
-   dotnet run --project InventoryTracker.Web
+### 2. Case-Sensitive Duplicate SKU Check
+- **What AI Got Wrong:** Initial SKU uniqueness check mein AI ne simple `p.Sku == dto.Sku` comparison likha tha, jis ki wajah se `"prd-1001"` aur `"PRD-1001"` jaise case variants 
+alag-alag SKUs ban kar database mein save ho sakte thay.
+- **How I Caught & Fixed It:** Lowercase SKUs ke saath duplicate-entry test karte waqt maine dekha ke inconsistent casing validation ko bypass kar rahi thi. 
+Maine service layer mein SKU inputs ko `.Trim().ToUpperInvariant()` se normalize kiya.
+

@@ -1,32 +1,28 @@
 ﻿# Inventory Tracker (.NET 10 MVC)
 
-A lightweight, production-structured Inventory Tracker built with **ASP.NET Core 10 (MVC)**, **Entity Framework Core**, **SQL Server**, **Bootstrap 5**, and **xUnit**.
+A self-contained Inventory & Stock Movements module built with **ASP.NET Core 10 (MVC)**, **Entity Framework Core**, **SQL Server LocalDB**, and **xUnit**.
 
-## Core Architecture & Design Decisions
+- **Why Soft Deactivate (`IsActive`) Over Hard Delete:**
+  Systems mein agar kisi product ko hard delete kar diya jaye toh uski historical `StockMovements` 
+  audit trail aur past stock reports corrupt ho jati hain. 
 
-- **Immutable Movement Ledger (`Derived Stock`)**: `Product` does not store a mutable `Quantity` column. Current stock is always derived strictly as `SUM(In) - SUM(Out)` from `StockMovements`, ensuring full auditability and eliminating stock drift.
-- **Negative Stock & Race Condition Protection**:
-  - `InventoryService.RecordMovementAsync` runs inside an explicit database transaction (`BeginTransactionAsync`), validates `quantity <= currentStock` before persisting any `Out` movement, and marks the parent `Product` entity as modified so SQL Server advances its `[Timestamp] RowVersion` concurrency token.
-  - Overlapping concurrent requests catch `DbUpdateConcurrencyException`, roll back cleanly, and display a conflict warning to the user.
-- **Auto-Generated SKUs with Uniqueness Enforcement**: Suggests the next sequential SKU (`PRD-1001`, `PRD-1002`, ...) on product creation while enforcing case-insensitive uniqueness both in service logic and via a SQL Server `UNIQUE` index.
+  Isliye database level par `DeleteBehavior.Restrict` lagaya gaya hai aur UI mein **Soft Deactivate (`IsActive = false`)** 
+  provide kiya gaya ta k deactivated products catalog mein archived rehte hain lekin un par koi new `In` ya `Out` movement 
+  record nahi ho saky.
 
-## Stretch Goals Implemented
+---
 
-1. **Server-Side Pagination**: 5-item pagination on the Product List and 10-item pagination on the Stock Movement Ledger.
-2. **CSV Movement Export**: One-click export (`GET /Products/ExportMovementsCsv/{id}`) of a product's complete chronological movement ledger.
-3. **Global Inventory Dashboard**: Summary cards showing Total Active SKUs, Active Units on Hand, and Count Below Reorder Level across the entire catalog.
-4. **Optimistic Concurrency (`RowVersion`)**: Database-level concurrency control with clean conflict feedback.
-5. **Audit Fields & Structured Logging**: `CreatedAt` and `UpdatedAt` UTC timestamps alongside `ILogger` structured telemetry.
-6. **JSON Stock API Endpoint**: `GET /api/products/{id}/stock` returning live derived stock and reorder status as JSON.
+## 1. How to Run Locally (Commands, DB Setup & Seed Data)
 
-## How to Run Locally
+Is project ko bilkul minimal setup ke saath design kiya gaya hai taake aapko koi manual SQL script na chalani pary:
 
 ### Prerequisites
 - .NET 10 SDK
-- SQL Server (LocalDB or SQL Server Express/Developer)
+- SQL Server LocalDB (Visual Studio ke saath pre-installed hota hai) ya koi bhi SQL Server instance
 
-### Setup Steps
-1. Update the `DefaultConnection` string in `InventoryTracker.Web/appsettings.json` to match your SQL Server instance.
-2. Run the web application (database and EF Core migrations apply automatically on startup via `DbInitializer.InitializeAsync`):
-   ```bash
-   dotnet run --project InventoryTracker.Web
+### Step-by-Step Commands
+1. Clone the repository:
+   
+   git clone https://github.com/LogOut420/DevExcel-InventoryTracker.git
+cd DevExcel-InventoryTracker
+

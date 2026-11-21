@@ -9,11 +9,6 @@ public class InventoryService : IInventoryService
     private readonly AppDbContext _db;
     private readonly ILogger<InventoryService> _logger;
 
-    public InventoryService(AppDbContext db)
-    {
-        _db = db;
-    }
-
     public InventoryService(AppDbContext db, ILogger<InventoryService> logger)
     {
         _db = db;
